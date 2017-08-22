@@ -1,9 +1,26 @@
 /*
-  Lights whith PIR sensor. Lights can be turned on and off normally
+  Lights with PIR sensor. Lights can be turned on and off normally
   from the power switch. The touch sensor will set the automatic
   proximity system on or off.
   When the system is on, the lights will turn on for about 1 min until
   it detects no precense.
+  The system can be armed or disarmed through the network.
+  It can also be updated if it is connected to the internet
+
+
+  Urls:
+  /system/1      Turns on motion detection system
+  /system/0      Turns off motion detection system
+  /lights/1      Turn on lights
+  /lights/0      Turn off lights
+  /update        Firmware update
+  
+  
+  v1.4     2017-06-20
+  Added url to controll lights
+  
+  v1.3     2017-06-20
+  Added firmware update
   
   v1.2     2017-06-20
   Added server to activate or deactivate system
@@ -14,20 +31,23 @@
   
   v1.0     2017-06-20
 
-
   
   Alfredo Rius
   alfredo.rius@gmail.com
+
 */
 
 #include <WiFi.h>
+#include <Update.h>
 #include <HTTPClient.h>
 
-#define ALARM_URL "http://192.168.0.175/io/1/"
+#define FIRMWARE "v1.4"
+#define ALARM_URL "http://192.168.0.175/io/1/" // Send something to the server if the system was activated
 
-#define TOUCH_PIN 4
-#define PIR 13
-#define RELAY 12
+#define TOUCH_PIN 4 // Touch button to arm/disarm the system
+#define PIR 13 // PIR sensor
+#define RELAY 12 // Logic is inverted so if nothing works, lights can work as usual
+#define BUTTON 0 // Update with on-board button
 
 // States
 #define STAND_BY   0
@@ -35,19 +55,33 @@
 #define POST       2
 #define POSTING    3
 
-#define TOUCH_SENSITIVITY 40
+#define TOUCH_SENSITIVITY 70
 
-#define LIGHT_PERIOD 2400 // X*50 milliseconds   2 min
+#define LIGHT_PERIOD 1200 // X*50 milliseconds   1 min
 #define RELAY_FILTER 2000 //milliseconds
-#define ALARM_DELAY 2400 // X*50 milliseconds    2 min
+#define ALARM_DELAY 1200 // X*50 milliseconds    1 min
 
 
-const char* ssid     = "******";
-const char* password = "******";
+const char* ssid     = "*****";
+const char* password = "*****";
+
+
+// OTA Bucket Config
+String host = "eileen.behuns.com"; // Host => bucket-name.s3.region.amazonaws.com
+int port = 80; // Non https. For HTTPS 443. As of today, HTTPS doesn't work.
+String bin = "/ESP32-Thing-Lights.ino.bin"; // bin file name with a slash in front.
+uint8_t ota = 0; // Update flag
+
+// Variables to validate
+// response from S3
+int contentLength = 0;
+bool isValidContentType = false;
+
 
 int httpCode;
 
 WiFiServer server(80);
+WiFiClient client;
 
 int server_status = 0;
 
@@ -56,10 +90,155 @@ uint8_t state = 0;
 // 1 - Setting up
 // 2 - Posting
 
+
 uint8_t touch_filter;
 long d;
 long alarm_delay = 0;
 
+// Utility to extract header value from headers
+String getHeaderValue(String header, String headerName) {
+  return header.substring(strlen(headerName.c_str()));
+}
+
+// OTA Logic 
+void execOTA() {
+  detachInterrupt(digitalPinToInterrupt(PIR));
+  noInterrupts();
+  Serial.println("Connecting to: " + String(host));
+  // Connect to S3
+  if (client.connect(host.c_str(), port)) {
+    // Connection Succeed.
+    // Fecthing the bin
+    Serial.println("Fetching Bin: " + String(bin));
+
+    // Get the contents of the bin file
+    client.print(String("GET ") + bin + " HTTP/1.1\r\n" +
+                 "Host: " + host + "\r\n" +
+                 "Cache-Control: no-cache\r\n" +
+                 "Connection: close\r\n\r\n");
+
+    // Check what is being sent
+    //    Serial.print(String("GET ") + bin + " HTTP/1.1\r\n" +
+    //                 "Host: " + host + "\r\n" +
+    //                 "Cache-Control: no-cache\r\n" +
+    //                 "Connection: close\r\n\r\n");
+
+    delay(100);
+    // Once the response is available,
+    // check stuff
+
+    /*
+       Response Structure
+        HTTP/1.1 200 OK
+        x-amz-id-2: NVKxnU1aIQMmpGKhSwpCBh8y2JPbak18QLIfE+OiUDOos+7UftZKjtCFqrwsGOZRN5Zee0jpTd0=
+        x-amz-request-id: 2D56B47560B764EC
+        Date: Wed, 14 Jun 2017 03:33:59 GMT
+        Last-Modified: Fri, 02 Jun 2017 14:50:11 GMT
+        ETag: "d2afebbaaebc38cd669ce36727152af9"
+        Accept-Ranges: bytes
+        Content-Type: application/octet-stream
+        Content-Length: 357280
+        Server: AmazonS3
+                                   
+        {{BIN FILE CONTENTS}}
+
+    */
+    while (client.available()) {
+      // read line till /n
+      String line = client.readStringUntil('\n');
+      // remove space, to check if the line is end of headers
+      line.trim();
+
+      // if the the line is empty,
+      // this is end of headers
+      // break the while and feed the
+      // remaining `client` to the
+      // Update.writeStream();
+      if (!line.length()) {
+        //headers ended
+        break; // and get the OTA started
+      }
+
+      // Check if the HTTP Response is 200
+      // else break and Exit Update
+      if (line.startsWith("HTTP/1.1")) {
+        if (line.indexOf("200") < 0) {
+          Serial.println("Got a non 200 status code from server. Exiting OTA Update.");
+          break;
+        }
+      }
+
+      // extract headers here
+      // Start with content length
+      if (line.startsWith("Content-Length: ")) {
+        contentLength = atoi((getHeaderValue(line, "Content-Length: ")).c_str());
+        Serial.println("Got " + String(contentLength) + " bytes from server");
+      }
+
+      // Next, the content type
+      if (line.startsWith("Content-Type: ")) {
+        String contentType = getHeaderValue(line, "Content-Type: ");
+        Serial.println("Got " + contentType + " payload.");
+        if (contentType == "application/octet-stream") {
+          isValidContentType = true;
+        }
+      }
+    }
+  } else {
+    // Connect to S3 failed
+    // May be try?
+    // Probably a choppy network?
+    Serial.println("Connection to " + String(host) + " failed. Please check your setup");
+    // retry??
+    // execOTA();
+  }
+
+  // Check what is the contentLength and if content type is `application/octet-stream`
+  Serial.println("contentLength : " + String(contentLength) + ", isValidContentType : " + String(isValidContentType));
+
+  // check contentLength and content type
+  if (contentLength && isValidContentType) {
+    // Check if there is enough to OTA Update
+    bool canBegin = Update.begin(contentLength);
+
+    // If yes, begin
+    if (canBegin) {
+      Serial.println("Begin OTA. This may take 2 - 5 mins to complete. Things might be quite for a while.. Patience!");
+      // No activity would appear on the Serial monitor
+      // So be patient. This may take 2 - 5mins to complete
+      size_t written = Update.writeStream(client);
+
+      if (written == contentLength) {
+        Serial.println("Written : " + String(written) + " successfully");
+      } else {
+        Serial.println("Written only : " + String(written) + "/" + String(contentLength) + ". Retry?" );
+        // retry??
+        // execOTA();
+      }
+
+      if (Update.end()) {
+        Serial.println("OTA done!");
+        if (Update.isFinished()) {
+          Serial.println("Update successfully completed. Rebooting.");
+          ESP.restart();
+        } else {
+          Serial.println("Update not finished? Something went wrong!");
+        }
+      } else {
+        Serial.println("Error Occurred. Error #: " + String(Update.getError()));
+      }
+    } else {
+      // not enough space to begin OTA
+      // Understand the partitions and
+      // space availability
+      Serial.println("Not enough space to begin OTA");
+      client.flush();
+    }
+  } else {
+    Serial.println("There was no content in the response");
+    client.flush();
+  }
+}
 
 
 void alarm(){
@@ -103,9 +282,9 @@ void alarm(){
 void setup() {
   pinMode(LED_BUILTIN,OUTPUT);
   pinMode(RELAY,OUTPUT);
-  pinMode(0,INPUT);
+  pinMode(BUTTON,INPUT);
   pinMode(PIR,INPUT_PULLUP);
-  //Serial.begin(115200);
+  Serial.begin(115200);
   WiFi.begin(ssid, password);
 
 
@@ -117,21 +296,21 @@ void setup() {
   
   digitalWrite(LED_BUILTIN,LOW);
 
-  
-  //Serial.println("Server Begin");
-  //Serial.println(WiFi.localIP());
+  Serial.print("Firmware: ");
+  Serial.println(FIRMWARE);
+
+  Serial.println(WiFi.localIP());
   server.begin();
 
   attachInterrupt(digitalPinToInterrupt(PIR),pir,FALLING);
 }
 
 void loop() {
-  WiFiClient client = server.available();   // listen for incoming clients
+  client = server.available();   // listen for incoming clients
 
 
   if(1){
     if (client) {                             // if you get a client,
-
       noInterrupts();
       
       //Serial.println("New Client.");           // print a message out the serial port
@@ -152,8 +331,15 @@ void loop() {
               client.println();
 
               // the content of the HTTP response follows the header:
-              client.print("Click <a href=\"/1\">here</a> to turn system on.<br>");
-              client.print("Click <a href=\"/0\">here</a> to turn system off.<br>");
+              
+              client.print("Firware: ");
+              client.print(FIRMWARE);
+              client.print("<br><br>System: ");
+              client.print(digitalRead(LED_BUILTIN));
+              client.print(" <a href=\"/system/1\">on</a> <a href=\"/system/0\">off</a><br>");
+              client.print("<br>Lights: ");
+              client.print(!digitalRead(RELAY));
+              client.print(" <a href=\"/lights/1\">on</a> <a href=\"/lights/0\">off</a><br>");
 
               // The HTTP response ends with another blank line:
               client.println();
@@ -167,15 +353,26 @@ void loop() {
           }
 
           // Check to see if the client request was "GET /1" or "GET /0":
-          if (currentLine.endsWith("GET /1")) {
+          if (currentLine.endsWith("GET /system/1")) {
             digitalWrite(LED_BUILTIN, HIGH);               // GET /1 turns the LED on
             if(!digitalRead(RELAY)){
               d = LIGHT_PERIOD;
             }
           }
-          if (currentLine.endsWith("GET /0")) {
+          if (currentLine.endsWith("GET /system/0")) {
             digitalWrite(LED_BUILTIN, LOW);                // GET /0 turns the LED off
             d = 0;
+          }
+          if (currentLine.endsWith("GET /lights/1")) {
+            digitalWrite(RELAY, LOW);
+            d = LIGHT_PERIOD;
+          }
+          if (currentLine.endsWith("GET /lights/0")) {
+            digitalWrite(RELAY, HIGH);
+            d = 0;
+          }
+          if (currentLine.endsWith("GET /update")) {
+            ota = 1;
           }
         }
       }
@@ -188,6 +385,13 @@ void loop() {
     }
   }
 
+  if(!digitalRead(BUTTON))
+    ota = 1;
+
+  if(ota){
+    digitalWrite(RELAY, HIGH);
+    execOTA(); // Update Firmware
+  }
   
   if(touchRead(TOUCH_PIN)<TOUCH_SENSITIVITY){
     touch_filter = 0;
@@ -241,8 +445,6 @@ void loop() {
   
   if(state == POST)
       alarm();
-
-
 
 
   
