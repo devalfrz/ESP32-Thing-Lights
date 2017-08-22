@@ -42,8 +42,8 @@
 #define ALARM_DELAY 2400 // X*50 milliseconds    2 min
 
 
-const char* ssid     = "Eileen";
-const char* password = "You-are-far-too-young-and-clever";
+const char* ssid     = "******";
+const char* password = "******";
 
 int httpCode;
 
