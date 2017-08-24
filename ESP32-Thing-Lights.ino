@@ -15,8 +15,17 @@
   /lights/0      Turn off lights
   /update        Firmware update
   
+
+  v1.5   2017-06-23
+  Remaped relay pin
+
+  v1.4.2   2017-06-23
+  Ignore wifi if unable to connect, try again after some time
   
-  v1.4     2017-06-20
+  v1.4.1   2017-06-23
+  Removed touch button
+  
+  v1.4     2017-06-22
   Added url to controll lights
   
   v1.3     2017-06-20
@@ -41,12 +50,11 @@
 #include <Update.h>
 #include <HTTPClient.h>
 
-#define FIRMWARE "v1.4"
-#define ALARM_URL "http://192.168.0.175/io/1/" // Send something to the server if the system was activated
+#define FIRMWARE "v1.5"
+#define ALARM_URL "http://your-alarm-server.com/" // Send something to the server if the system is activated
 
-#define TOUCH_PIN 4 // Touch button to arm/disarm the system
 #define PIR 13 // PIR sensor
-#define RELAY 12 // Logic is inverted so if nothing works, lights can work as usual
+#define RELAY 25 // Logic is inverted so if nothing works, lights can work as usual
 #define BUTTON 0 // Update with on-board button
 
 // States
@@ -57,17 +65,20 @@
 
 #define TOUCH_SENSITIVITY 70
 
-#define LIGHT_PERIOD 1200 // X*50 milliseconds   1 min
-#define RELAY_FILTER 2000 //milliseconds
-#define ALARM_DELAY 1200 // X*50 milliseconds    1 min
+#define LIGHT_PERIOD  2400   // X*50 milliseconds   2 min
+#define RELAY_FILTER  2000   // milliseconds
+#define ALARM_DELAY  12000   // X*50 milliseconds    10 min
+#define WIFI_COUNTER 12000   // X*50 milliseconds    10 min
+#define WIFI_COUNTER_CONNECT 100// X*50 5 seconds
+
+#define SSID "*****"
+#define PASS "*****"
 
 
-const char* ssid     = "*****";
-const char* password = "*****";
 
 
 // OTA Bucket Config
-String host = "eileen.behuns.com"; // Host => bucket-name.s3.region.amazonaws.com
+String host = "your-firmware-server.com"; // Host => bucket-name.s3.region.amazonaws.com
 int port = 80; // Non https. For HTTPS 443. As of today, HTTPS doesn't work.
 String bin = "/ESP32-Thing-Lights.ino.bin"; // bin file name with a slash in front.
 uint8_t ota = 0; // Update flag
@@ -94,6 +105,7 @@ uint8_t state = 0;
 uint8_t touch_filter;
 long d;
 long alarm_delay = 0;
+long wifi_counter = WIFI_COUNTER_CONNECT;
 
 // Utility to extract header value from headers
 String getHeaderValue(String header, String headerName) {
@@ -278,6 +290,23 @@ void alarm(){
   state = STAND_BY;
 }
 
+void wifiConnect(){
+
+  wifi_counter = WIFI_COUNTER_CONNECT;
+  
+  while (WiFi.status() != WL_CONNECTED && wifi_counter>0) {
+    delay(50);
+    digitalWrite(LED_BUILTIN,!digitalRead(LED_BUILTIN));
+    wifi_counter--;
+  }
+  if(WiFi.status() == WL_CONNECTED){
+    Serial.println("");
+    Serial.println(WiFi.localIP());
+    server.begin();
+  }
+  
+  wifi_counter = WIFI_COUNTER;
+}
 
 void setup() {
   pinMode(LED_BUILTIN,OUTPUT);
@@ -285,22 +314,17 @@ void setup() {
   pinMode(BUTTON,INPUT);
   pinMode(PIR,INPUT_PULLUP);
   Serial.begin(115200);
-  WiFi.begin(ssid, password);
+  WiFi.begin(SSID, PASS);
 
+  // For the system to stabilize
+  delay(500);
 
-  while (WiFi.status() != WL_CONNECTED) {
-    delay(100);
-    digitalWrite(LED_BUILTIN,!digitalRead(LED_BUILTIN));
-    //Serial.print(".");
-  }
+  wifiConnect();
   
   digitalWrite(LED_BUILTIN,LOW);
 
   Serial.print("Firmware: ");
   Serial.println(FIRMWARE);
-
-  Serial.println(WiFi.localIP());
-  server.begin();
 
   attachInterrupt(digitalPinToInterrupt(PIR),pir,FALLING);
 }
@@ -309,80 +333,82 @@ void loop() {
   client = server.available();   // listen for incoming clients
 
 
-  if(1){
-    if (client) {                             // if you get a client,
-      noInterrupts();
-      
-      //Serial.println("New Client.");           // print a message out the serial port
-      String currentLine = "";                // make a String to hold incoming data from the client
-      while (client.connected()) {            // loop while the client's connected
-        if (client.available()) {             // if there's bytes to read from the client,
-          char c = client.read();             // read a byte, then
-          //Serial.write(c);                    // print it out the serial monitor
-          if (c == '\n') {                    // if the byte is a newline character
-  
-            // if the current line is blank, you got two newline characters in a row.
-            // that's the end of the client HTTP request, so send a response:
-            if (currentLine.length() == 0) {
-              // HTTP headers always start with a response code (e.g. HTTP/1.1 200 OK)
-              // and a content-type so the client knows what's coming, then a blank line:
-              client.println("HTTP/1.1 200 OK");
-              client.println("Content-type:text/html");
-              client.println();
+  if (client) {                             // if you get a client,
+    noInterrupts();
+    
+    //Serial.println("New Client.");           // print a message out the serial port
+    String currentLine = "";                // make a String to hold incoming data from the client
+    while (client.connected()) {            // loop while the client's connected
+      if (client.available()) {             // if there's bytes to read from the client,
+        char c = client.read();             // read a byte, then
+        //Serial.write(c);                    // print it out the serial monitor
+        if (c == '\n') {                    // if the byte is a newline character
 
-              // the content of the HTTP response follows the header:
-              
-              client.print("Firware: ");
-              client.print(FIRMWARE);
-              client.print("<br><br>System: ");
-              client.print(digitalRead(LED_BUILTIN));
-              client.print(" <a href=\"/system/1\">on</a> <a href=\"/system/0\">off</a><br>");
-              client.print("<br>Lights: ");
-              client.print(!digitalRead(RELAY));
-              client.print(" <a href=\"/lights/1\">on</a> <a href=\"/lights/0\">off</a><br>");
-
-              // The HTTP response ends with another blank line:
-              client.println();
-              // break out of the while loop:
-              break;
-            } else {    // if you got a newline, then clear currentLine:
-              currentLine = "";
-            }
-          } else if (c != '\r') {  // if you got anything else but a carriage return character,
-            currentLine += c;      // add it to the end of the currentLine
+          // if the current line is blank, you got two newline characters in a row.
+          // that's the end of the client HTTP request, so send a response:
+          if (currentLine.length() == 0) {
+            // HTTP headers always start with a response code (e.g. HTTP/1.1 200 OK)
+            // and a content-type so the client knows what's coming, then a blank line:
+            client.println("HTTP/1.1 200 OK");
+            client.println("Content-type:text/html");
+            client.println();
+            // the content of the HTTP response follows the header:
+            
+            client.print("Firware: ");
+            client.print(FIRMWARE);
+            client.print("<br><br>System: ");
+            client.print(digitalRead(LED_BUILTIN));
+            if(digitalRead(LED_BUILTIN))
+              client.print(" <a href=\"/system/0\">off</a><br>");
+            else
+              client.print(" <a href=\"/system/1\">on</a><br>");
+            client.print("<br>Lights: ");
+            client.print(!digitalRead(RELAY));
+            if(digitalRead(RELAY))
+              client.print(" <a href=\"/lights/1\">on</a>");
+            else
+              client.print(" <a href=\"/lights/0\">off</a>");
+             // The HTTP response ends with another blank line:
+            client.println();
+            // break out of the while loop:
+            break;
+          } else {    // if you got a newline, then clear currentLine:
+            currentLine = "";
           }
-
-          // Check to see if the client request was "GET /1" or "GET /0":
-          if (currentLine.endsWith("GET /system/1")) {
-            digitalWrite(LED_BUILTIN, HIGH);               // GET /1 turns the LED on
-            if(!digitalRead(RELAY)){
-              d = LIGHT_PERIOD;
-            }
-          }
-          if (currentLine.endsWith("GET /system/0")) {
-            digitalWrite(LED_BUILTIN, LOW);                // GET /0 turns the LED off
-            d = 0;
-          }
-          if (currentLine.endsWith("GET /lights/1")) {
-            digitalWrite(RELAY, LOW);
+        } else if (c != '\r') {  // if you got anything else but a carriage return character,
+          currentLine += c;      // add it to the end of the currentLine
+        }
+         // Check to see if the client request was "GET /1" or "GET /0":
+        if (currentLine.endsWith("GET /system/1")) {
+          digitalWrite(LED_BUILTIN, HIGH);               // GET /1 turns the LED on
+          if(!digitalRead(RELAY)){
             d = LIGHT_PERIOD;
           }
-          if (currentLine.endsWith("GET /lights/0")) {
-            digitalWrite(RELAY, HIGH);
-            d = 0;
-          }
-          if (currentLine.endsWith("GET /update")) {
-            ota = 1;
-          }
+        }
+        else if (currentLine.endsWith("GET /system/0")) {
+          digitalWrite(LED_BUILTIN, LOW);                // GET /0 turns the LED off
+          d = 0;
+        }
+        else if (currentLine.endsWith("GET /lights/1")) {
+          digitalWrite(RELAY, LOW);
+          d = LIGHT_PERIOD;
+        }
+        else if (currentLine.endsWith("GET /lights/0")) {
+          digitalWrite(RELAY, HIGH);
+          d = 0;
+        }
+        else if (currentLine.endsWith("GET /update")) {
+          ota = 1;
+        }
+        else{
+          
         }
       }
-      // close the connection:
-      client.stop();
-      //Serial.println("Client Disconnected.");
-
-      interrupts();
-      
     }
+    // close the connection:
+    client.stop();
+    //Serial.println("Client Disconnected.");
+     interrupts();
   }
 
   if(!digitalRead(BUTTON))
@@ -392,37 +418,7 @@ void loop() {
     digitalWrite(RELAY, HIGH);
     execOTA(); // Update Firmware
   }
-  
-  if(touchRead(TOUCH_PIN)<TOUCH_SENSITIVITY){
-    touch_filter = 0;
-    while(touchRead(TOUCH_PIN)<TOUCH_SENSITIVITY){touch_filter++; delay(10);}
-    if(touch_filter>10){
-      
-      noInterrupts();
-      
-      alarm_delay = ALARM_DELAY;
-      
-      digitalWrite(LED_BUILTIN,!digitalRead(LED_BUILTIN));
-      if(!digitalRead(LED_BUILTIN)){
-        digitalWrite(RELAY,HIGH);
-        delay(300);
-        digitalWrite(RELAY,LOW);
-      }else{
-        digitalWrite(RELAY,HIGH);
-        delay(300);
-        digitalWrite(RELAY,LOW);
-        delay(300);
-        digitalWrite(RELAY,HIGH);
-        delay(300);
-        digitalWrite(RELAY,LOW);
-        d = LIGHT_PERIOD;
-      }
 
-      interrupts();
-      
-      while(touchRead(TOUCH_PIN)<TOUCH_SENSITIVITY) delay(10);
-    }
-  }
   if(digitalRead(LED_BUILTIN)){
     if(d>1){
       digitalWrite(RELAY,LOW);
@@ -438,8 +434,6 @@ void loop() {
 
 
 
-
-
   if(alarm_delay)
     alarm_delay--;
   
@@ -447,6 +441,10 @@ void loop() {
       alarm();
 
 
+  if(!wifi_counter)//Try to connect if not already connected
+    wifiConnect();
+  else
+    wifi_counter--;
   
   delay(50);
 }
