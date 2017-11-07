@@ -16,6 +16,9 @@
   /update        Firmware update
   
 
+  v1.6   2017-11-17
+  System ON by default
+
   v1.5   2017-06-23
   Remaped relay pin
 
@@ -50,8 +53,8 @@
 #include <Update.h>
 #include <HTTPClient.h>
 
-#define FIRMWARE "v1.5"
-#define ALARM_URL "http://your-alarm-server.com/" // Send something to the server if the system is activated
+#define FIRMWARE "v1.6"
+#define ALARM_URL "http://192.168.0.175/io/1/" // Send something to the server if the system is activated
 
 #define PIR 13 // PIR sensor
 #define RELAY 25 // Logic is inverted so if nothing works, lights can work as usual
@@ -65,20 +68,20 @@
 
 #define TOUCH_SENSITIVITY 70
 
-#define LIGHT_PERIOD  2400   // X*50 milliseconds   2 min
+#define LIGHT_PERIOD  2400   // X*50 milliseconds    2 min
 #define RELAY_FILTER  2000   // milliseconds
 #define ALARM_DELAY  12000   // X*50 milliseconds    10 min
 #define WIFI_COUNTER 12000   // X*50 milliseconds    10 min
 #define WIFI_COUNTER_CONNECT 100// X*50 5 seconds
 
-#define SSID "*****"
-#define PASS "*****"
+#define SSID "Eileen"
+#define PASS "You-are-far-too-young-and-clever"
 
 
 
 
 // OTA Bucket Config
-String host = "your-firmware-server.com"; // Host => bucket-name.s3.region.amazonaws.com
+String host = "eileen.behuns.com"; // Host => bucket-name.s3.region.amazonaws.com
 int port = 80; // Non https. For HTTPS 443. As of today, HTTPS doesn't work.
 String bin = "/ESP32-Thing-Lights.ino.bin"; // bin file name with a slash in front.
 uint8_t ota = 0; // Update flag
@@ -321,7 +324,8 @@ void setup() {
 
   wifiConnect();
   
-  digitalWrite(LED_BUILTIN,LOW);
+  digitalWrite(LED_BUILTIN,HIGH); // Start system ON
+  pir(); // Activate system
 
   Serial.print("Firmware: ");
   Serial.println(FIRMWARE);
