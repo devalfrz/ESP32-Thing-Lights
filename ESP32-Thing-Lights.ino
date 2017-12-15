@@ -16,6 +16,9 @@
   /update        Firmware update
   
 
+  v1.7   2017-12-17
+  Fixed Reconnection issues
+  
   v1.6   2017-11-17
   System ON by default
 
@@ -53,7 +56,7 @@
 #include <Update.h>
 #include <HTTPClient.h>
 
-#define FIRMWARE "v1.6"
+#define FIRMWARE "v1.7"
 #define ALARM_URL "http://192.168.0.175/io/1/" // Send something to the server if the system is activated
 
 #define PIR 13 // PIR sensor
@@ -72,7 +75,7 @@
 #define RELAY_FILTER  2000   // milliseconds
 #define ALARM_DELAY  12000   // X*50 milliseconds    10 min
 #define WIFI_COUNTER 12000   // X*50 milliseconds    10 min
-#define WIFI_COUNTER_CONNECT 100// X*50 5 seconds
+#define WIFI_COUNTER_CONNECT 300// X*50 30 seconds
 
 #define SSID "Eileen"
 #define PASS "You-are-far-too-young-and-clever"
@@ -293,22 +296,28 @@ void alarm(){
   state = STAND_BY;
 }
 
-void wifiConnect(){
-
-  wifi_counter = WIFI_COUNTER_CONNECT;
-  
-  while (WiFi.status() != WL_CONNECTED && wifi_counter>0) {
-    delay(50);
-    digitalWrite(LED_BUILTIN,!digitalRead(LED_BUILTIN));
-    wifi_counter--;
+uint8_t wifiConnect(){
+  Serial.println("Connecting...");
+  if(WiFi.status() != WL_CONNECTED){
+    WiFi.begin(SSID,PASS);
+    delay(500);
+    
+    wifi_counter = WIFI_COUNTER_CONNECT;
+    
+    while(WiFi.status() != WL_CONNECTED && wifi_counter>0) {
+      delay(50);
+      digitalWrite(LED_BUILTIN,!digitalRead(LED_BUILTIN));
+      wifi_counter--;
+    }
+    if(!wifi_counter){
+      return 0; //Unable to connect
+    }
   }
   if(WiFi.status() == WL_CONNECTED){
-    Serial.println("");
     Serial.println(WiFi.localIP());
     server.begin();
   }
-  
-  wifi_counter = WIFI_COUNTER;
+  return 1; //Connected
 }
 
 void setup() {
@@ -317,10 +326,6 @@ void setup() {
   pinMode(BUTTON,INPUT);
   pinMode(PIR,INPUT_PULLUP);
   Serial.begin(115200);
-  WiFi.begin(SSID, PASS);
-
-  // For the system to stabilize
-  delay(500);
 
   wifiConnect();
   
@@ -444,11 +449,15 @@ void loop() {
   if(state == POST)
       alarm();
 
-
-  if(!wifi_counter)//Try to connect if not already connected
-    wifiConnect();
-  else
-    wifi_counter--;
+  // Reconnect if no wifi
+  if(WiFi.status() != WL_CONNECTED){
+    if(!wifi_counter){
+      wifiConnect();
+      wifi_counter = WIFI_COUNTER;
+    }else{
+      wifi_counter--;
+    }
+  }
   
   delay(50);
 }
