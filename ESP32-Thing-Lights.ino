@@ -1,7 +1,6 @@
 /*
   Lights with PIR sensor. Lights can be turned on and off normally
-  from the power switch. The touch sensor will set the automatic
-  proximity system on or off.
+  from the power switch.
   When the system is on, the lights will turn on for about 1 min until
   it detects no precense.
   The system can be armed or disarmed through the network.
@@ -16,6 +15,11 @@
   /update        Firmware update
   
 
+  v1.8   2018-05-27
+  Added body styles.
+  Wait to listen to PIR sensor if lights are turned on/off by the web.
+  Show on and off options on web interface.
+  
   v1.7   2017-12-17
   Fixed Reconnection issues
   
@@ -52,16 +56,23 @@
 
 */
 
+#define SSID ""
+#define PASS ""
+#define ALARM_URL "" // Send something to the server if the system is activated
+
+
+
+
+#define FIRMWARE "v1.8"
+
+#define PIR 13   // PIR sensor
+#define RELAY 25 // Logic is inverted so if nothing works, lights can work as usual
+#define BUTTON 0 // Update with on-board button
+
+
 #include <WiFi.h>
 #include <Update.h>
 #include <HTTPClient.h>
-
-#define FIRMWARE "v1.7"
-#define ALARM_URL "http://192.168.0.175/io/1/" // Send something to the server if the system is activated
-
-#define PIR 13 // PIR sensor
-#define RELAY 25 // Logic is inverted so if nothing works, lights can work as usual
-#define BUTTON 0 // Update with on-board button
 
 // States
 #define STAND_BY   0
@@ -69,16 +80,11 @@
 #define POST       2
 #define POSTING    3
 
-#define TOUCH_SENSITIVITY 70
-
 #define LIGHT_PERIOD  2400   // X*50 milliseconds    2 min
 #define RELAY_FILTER  2000   // milliseconds
 #define ALARM_DELAY  12000   // X*50 milliseconds    10 min
 #define WIFI_COUNTER 12000   // X*50 milliseconds    10 min
 #define WIFI_COUNTER_CONNECT 300// X*50 30 seconds
-
-#define SSID "Eileen"
-#define PASS "You-are-far-too-young-and-clever"
 
 
 
@@ -102,13 +108,12 @@ WiFiClient client;
 
 int server_status = 0;
 
-uint8_t state = 0;
+uint8_t state = STAND_BY;
 // 0 - Stand by
 // 1 - Setting up
 // 2 - Posting
 
 
-uint8_t touch_filter;
 long d;
 long alarm_delay = 0;
 long wifi_counter = WIFI_COUNTER_CONNECT;
@@ -320,28 +325,11 @@ uint8_t wifiConnect(){
   return 1; //Connected
 }
 
-void setup() {
-  pinMode(LED_BUILTIN,OUTPUT);
-  pinMode(RELAY,OUTPUT);
-  pinMode(BUTTON,INPUT);
-  pinMode(PIR,INPUT_PULLUP);
-  Serial.begin(115200);
+void processClient(){
+  uint8_t tmp;
 
-  wifiConnect();
+  client = server.available();
   
-  digitalWrite(LED_BUILTIN,HIGH); // Start system ON
-  pir(); // Activate system
-
-  Serial.print("Firmware: ");
-  Serial.println(FIRMWARE);
-
-  attachInterrupt(digitalPinToInterrupt(PIR),pir,FALLING);
-}
-
-void loop() {
-  client = server.available();   // listen for incoming clients
-
-
   if (client) {                             // if you get a client,
     noInterrupts();
     
@@ -362,21 +350,21 @@ void loop() {
             client.println("Content-type:text/html");
             client.println();
             // the content of the HTTP response follows the header:
-            
+
+            client.print("<!DOCTYPE html><html><head>");
+            client.print("<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">");
+            client.print("</head><body style=\"font-size:2em;font-family:Arial, Helvetica, sans-serif\">");
             client.print("Firware: ");
             client.print(FIRMWARE);
             client.print("<br><br>System: ");
             client.print(digitalRead(LED_BUILTIN));
-            if(digitalRead(LED_BUILTIN))
-              client.print(" <a href=\"/system/0\">off</a><br>");
-            else
-              client.print(" <a href=\"/system/1\">on</a><br>");
+            client.print(" <a href=\"/system/1\">on</a> ");
+            client.print(" <a href=\"/system/0\">off</a><br>");
             client.print("<br>Lights: ");
             client.print(!digitalRead(RELAY));
-            if(digitalRead(RELAY))
-              client.print(" <a href=\"/lights/1\">on</a>");
-            else
-              client.print(" <a href=\"/lights/0\">off</a>");
+            client.print(" <a href=\"/lights/1\">on</a>");
+            client.print(" <a href=\"/lights/0\">off</a>");
+            client.print("</body>");
              // The HTTP response ends with another blank line:
             client.println();
             // break out of the while loop:
@@ -399,12 +387,21 @@ void loop() {
           d = 0;
         }
         else if (currentLine.endsWith("GET /lights/1")) {
+          tmp = digitalRead(LED_BUILTIN);
+          digitalWrite(LED_BUILTIN, LOW);
           digitalWrite(RELAY, LOW);
           d = LIGHT_PERIOD;
+          delay(100);
+          digitalWrite(LED_BUILTIN, tmp);
+
         }
         else if (currentLine.endsWith("GET /lights/0")) {
+          tmp = digitalRead(LED_BUILTIN);
+          digitalWrite(LED_BUILTIN, LOW);
           digitalWrite(RELAY, HIGH);
-          d = 0;
+          d = 1;
+          delay(100);
+          digitalWrite(LED_BUILTIN, tmp);
         }
         else if (currentLine.endsWith("GET /update")) {
           ota = 1;
@@ -417,14 +414,38 @@ void loop() {
     // close the connection:
     client.stop();
     //Serial.println("Client Disconnected.");
-     interrupts();
+    interrupts();
   }
+}
+
+void setup() {
+  pinMode(LED_BUILTIN,OUTPUT);
+  pinMode(RELAY,OUTPUT);
+  pinMode(BUTTON,INPUT);
+  pinMode(PIR,INPUT_PULLUP);
+  Serial.begin(115200);
+
+  wifiConnect();
+  
+  digitalWrite(LED_BUILTIN,HIGH); // Start system ON
+  pir(); // Activate system
+
+  Serial.print("Firmware: ");
+  Serial.println(FIRMWARE);
+
+  attachInterrupt(digitalPinToInterrupt(PIR),pir,FALLING);
+}
+
+void loop() {
+
+  processClient();
 
   if(!digitalRead(BUTTON))
     ota = 1;
 
   if(ota){
     digitalWrite(RELAY, HIGH);
+    digitalWrite(LED_BUILTIN, LOW);
     execOTA(); // Update Firmware
   }
 
