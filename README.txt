@@ -1,6 +1,5 @@
 Lights with PIR sensor. Lights can be turned on and off normally
-from the power switch. The touch sensor will set the automatic
-proximity system on or off.
+from the power switch.
 When the system is on, the lights will turn on for about 1 min until
 it detects no precense.
 The system can be armed or disarmed through the network.
@@ -15,7 +14,27 @@ Urls:
 /update        Firmware update
 
 
-v1.4     2017-06-20
+v1.8   2018-05-27
+Added body styles.
+Wait to listen to PIR sensor if lights are turned on/off by the web.
+Show on and off options on web interface.
+
+v1.7   2017-12-17
+Fixed Reconnection issues
+
+v1.6   2017-11-17
+System ON by default
+
+v1.5   2017-06-23
+Remaped relay pin
+
+v1.4.2   2017-06-23
+Ignore wifi if unable to connect, try again after some time
+
+v1.4.1   2017-06-23
+Removed touch button
+
+v1.4     2017-06-22
 Added url to controll lights
 
 v1.3     2017-06-20
