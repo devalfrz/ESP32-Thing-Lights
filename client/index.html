@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="en-us">
+<head>
+    <meta http-equiv="content-type" content="text/html; charset=utf-8">
+    <title>Lights</title>
+    <style>
+body{
+  font-family: Arial, Helvetica, sans-serif;
+  margin: 0;
+  padding: 20px;
+  background-color: lightblue;
+  text-align: center;
+}
+
+.footer{
+  text-align: right;
+  position: fixed;
+  width: 100%;
+  right: 10px;
+  bottom: 10px;
+}
+
+a{
+  color: darkslategray;
+  text-decoration: none;
+}
+
+div.light{
+  display: inline-block;
+  vertical-align: top;
+  width: 100%;
+  max-width: 350px;
+  text-align: left;
+  border: 1px solid #BFBFBF;
+  background-color: white;
+  box-shadow: 10px 10px 5px #aaaaaa;
+  margin: 10px 10px;
+}
+
+div.light>div{
+  padding: 10px 10px 20px 10px;
+}
+
+button{
+  background-color: white;
+  color: black;
+  font-size: .8em;
+  display: block;
+  border: solid 2px black;
+  padding: 4px;
+  text-decoration: none;
+  width: 75%;
+  margin: 5px auto;
+  cursor: pointer;
+}
+
+button:hover{
+  color: white;
+  background-color: black;
+}
+
+button.off{
+  color: white;
+  background-color: black;
+}
+
+button.off:hover{
+  color: black;
+  background-color: white;
+}
+
+@media only screen and (max-width: 370px) {
+  div.light{
+    margin-right: inherit;
+    margin-left: inherit;
+  }
+}
+    </style>
+</head>
+<body>
+<h1>Lights</h1>
+<main>
+</main>
+<div class="footer">
+  Developed by <a href="http://alfredorius.com">Alfredo Rius</a><br>
+  <a href="https://github.com/devalfrz/ESP32-Thing-Lights/">https://github.com/devalfrz/ESP32-Thing-Lights/</a>
+</div>
+<script>
+
+// Update accordingly:
+var lights = [
+  {
+    name:'Living Room',
+    url:'/hydrogen/lights0',
+  },
+  {
+    name:'First Floor',
+    url:'/hydrogen/lights1',
+  },
+];
+
+
+var init_buttons = function(index,url){
+  var light = document.querySelector('div.light[data-index="'+index+'"]');
+  var buttons = document.querySelector('div.light[data-index="'+index+'"] div.buttons');
+  var firmware = document.querySelector('div.light[data-index="'+index+'"] div.firmware');
+
+  firmware.innerHTML = 'Loading...';
+  buttons.innerHTML = '';
+
+  if(url == undefined) url = light.dataset.url;
+  console.log(url);
+  var xhttp = new XMLHttpRequest();
+  xhttp.onreadystatechange = function() {
+    if (this.readyState == 4 && this.status == 200) {
+      var buttons = document.querySelector('div.light[data-index="'+index+'"] div.buttons');
+      var firmware = document.querySelector('div.light[data-index="'+index+'"] div.firmware');
+
+      firmware.innerHTML = this.responseText.match(/Firm?ware: ([^<]+)/g);
+
+      var system_status = (/System: ([0|1])/g.exec(this.responseText)[1] != '0')?0:1;
+      var lights_status = (/Lights: ([0|1])/g.exec(this.responseText)[1] != '0')?0:1;
+
+      buttons.innerHTML += '<button '+(lights_status?'class="off" ':'')+'onClick="init_buttons('+index+',\''+lights[index].url+'/lights/'+lights_status+'/\')">Lights</button>';
+      buttons.innerHTML += '<button '+(system_status?'class="off" ':'')+'onClick="init_buttons('+index+',\''+lights[index].url+'/system/'+system_status+'/\')">System</button>';
+    }
+  };
+  xhttp.open("GET", url, true);
+  xhttp.send();
+}
+
+var init_lights = function(){
+  for(var i=0; i<lights.length; i++){
+    var light = '<div class="light" data-index="'+i+'" data-url="'+
+      lights[i].url+'"><div><h3>'+
+      lights[i].name+
+      '</h3><div class="firmware"></div><div class="buttons"></div><div></div>';
+    document.getElementsByTagName('main')[0].innerHTML += light; 
+    init_buttons(i);
+  }
+}
+
+init_lights();
+
+</script>
+</body>
+</html>
